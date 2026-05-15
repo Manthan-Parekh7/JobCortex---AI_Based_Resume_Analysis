@@ -195,7 +195,6 @@ JobCortex/
 ### Backend Scripts
 - `npm run server` - Start development server with nodemon
 - `npm start` - Start production server
-- `npm test` - Run tests
 
 ### Frontend Scripts
 - `npm run dev` - Start development server
