@@ -21,13 +21,13 @@ export const AuthProvider = ({ children }) => {
     const loadUser = async () => {
         setLoading(true);
         try {
-            console.log("AuthContext - Calling getMe...");
+            if (import.meta.env.DEV) console.debug("AuthContext: loadUser start");
             const data = await getMe();
-            console.log("AuthContext - getMe response:", data);
             setUser(data.user || null);
-        } catch (err) {
-            console.error("AuthContext - getMe error:", err);
+            if (import.meta.env.DEV) console.debug("AuthContext: loadUser success");
+        } catch {
             setUser(null);
+            if (import.meta.env.DEV) console.debug("AuthContext: loadUser failed (unauthenticated or network)");
         } finally {
             setLoading(false);
         }
@@ -53,8 +53,8 @@ export const AuthProvider = ({ children }) => {
                         navigate('/onboarding');
                     }
                 }
-            } catch (err) {
-                console.error('Failed to parse OAuth user data:', err);
+            } catch {
+                if (import.meta.env.DEV) console.debug("AuthContext: failed to parse OAuth user data from URL");
             }
         }
     };
@@ -74,12 +74,12 @@ export const AuthProvider = ({ children }) => {
         setLoading(true);
         try {
             const data = await loginUser(credentials);
-            console.log("AuthContext - login success data:", data);
+            if (import.meta.env.DEV) console.debug("AuthContext: login success");
             setUser(data.user || null);
             if (data.accessToken) setAccessToken(data.accessToken);
             return { success: true, data };
         } catch (err) {
-            console.error("AuthContext - login error caught:", err);
+            if (import.meta.env.DEV) console.debug("AuthContext: login error", err.message);
             setUser(null);
             return { success: false, error: err.message || "An unknown error occurred." };
         } finally {
@@ -92,13 +92,13 @@ export const AuthProvider = ({ children }) => {
         setLoading(true);
         try {
             const data = await signupUser(payload);
-            console.log("AuthContext - signup success data:", data);
+            if (import.meta.env.DEV) console.debug("AuthContext: signup success");
             // store user temporarily until OTP verified
             setPendingUser(data.user || null);
             setOtpDialogOpen(true);
             return { success: true, message: data.message, user: data.user };
         } catch (err) {
-            console.error("AuthContext - signup error caught:", err);
+            if (import.meta.env.DEV) console.debug("AuthContext: signup error", err.message);
             return { success: false, error: err.message || "An unknown error occurred." };
         } finally {
             setLoading(false);
@@ -110,7 +110,7 @@ export const AuthProvider = ({ children }) => {
         setLoading(true);
         try {
             const data = await verifyOtpApi(otpPayload); // { message, user }
-            console.log("AuthContext - verifyOtp success data:", data);
+            if (import.meta.env.DEV) console.debug("AuthContext: verifyOtp success");
             setUser(data.user || null);
             setPendingUser(null);
             setOtpDialogOpen(false);
@@ -122,7 +122,7 @@ export const AuthProvider = ({ children }) => {
 
             return { success: true, user: data.user };
         } catch (err) {
-            console.error("AuthContext - verifyOtp error caught:", err);
+            if (import.meta.env.DEV) console.debug("AuthContext: verifyOtp error", err.message);
             return { success: false, error: err.message || "An unknown error occurred." };
         } finally {
             setLoading(false);

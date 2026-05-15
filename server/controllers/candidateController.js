@@ -10,6 +10,28 @@ const { v2: cloudinary } = pkg;
 import { getOrParseResumeText } from "../utils/getOrParseResumeText.js";
 import { analyzeResumeMistral } from "../ai/openrouterClient.js";
 
+// ── Utility: safe JSON array field parser ─────────────────────────────────────
+/**
+ * Parses a JSON string that is expected to be an array.
+ * Returns `undefined` when the value is not provided so callers can skip
+ * the field update gracefully.
+ * Throws a descriptive Error (caught and converted to 400) on bad input.
+ */
+function parseArrayField(fieldValue, fieldName) {
+    if (fieldValue === undefined || fieldValue === null) return undefined;
+    let parsed;
+    try {
+        parsed = typeof fieldValue === "string" ? JSON.parse(fieldValue) : fieldValue;
+    } catch {
+        throw new Error(`${fieldName} must be valid JSON`);
+    }
+    if (!Array.isArray(parsed)) {
+        throw new Error(`${fieldName} must be an array`);
+    }
+    return parsed;
+}
+
+
 // Get all active jobs (public)
 export const listJobs = async (req, res) => {
     try {
@@ -410,12 +432,25 @@ export const updateUserProfile = async (req, res) => {
         if (phone !== undefined) user.phone = phone;
         if (location !== undefined) user.location = location;
 
-        // Update arrays (replace entire array)
-        if (skills) user.skills = JSON.parse(skills);
-        if (experience) user.experience = JSON.parse(experience);
-        if (education) user.education = JSON.parse(education);
-        if (projects) user.projects = JSON.parse(projects);
-        if (certifications) user.certifications = JSON.parse(certifications);
+        // Update arrays (replace entire array) — safe parse with field validation
+        try {
+            const parsedSkills = parseArrayField(skills, "skills");
+            if (parsedSkills !== undefined) user.skills = parsedSkills;
+
+            const parsedExperience = parseArrayField(experience, "experience");
+            if (parsedExperience !== undefined) user.experience = parsedExperience;
+
+            const parsedEducation = parseArrayField(education, "education");
+            if (parsedEducation !== undefined) user.education = parsedEducation;
+
+            const parsedProjects = parseArrayField(projects, "projects");
+            if (parsedProjects !== undefined) user.projects = parsedProjects;
+
+            const parsedCertifications = parseArrayField(certifications, "certifications");
+            if (parsedCertifications !== undefined) user.certifications = parsedCertifications;
+        } catch (parseErr) {
+            return res.status(400).json({ success: false, message: parseErr.message });
+        }
 
         // Handle profile image upload
         if (req.file) {
@@ -448,29 +483,17 @@ export const parseResumeFromCloudinary = async (req, res) => {
 
         const jobGoal = req.body?.jobGoal || "";
 
-        // Analyze resume with AI using cached plain text
-        const aiOutput = await analyzeResumeMistral(resumeText, jobGoal);
+        // analyzeResumeMistral now returns a validated, parsed object (via Zod)
+        // No secondary JSON.parse or markdown stripping needed here.
+        const parsedOutput = await analyzeResumeMistral(resumeText, jobGoal);
 
-        // Parse AI output string JSON (strip markdown/code if needed)
-        let parsedOutput;
-        try {
-            let cleaned = aiOutput
-                .trim()
-                .replace(/^```[\w]*\n/, "")
-                .replace(/```$/, "")
-                .trim();
-
-            parsedOutput = JSON.parse(cleaned);
-            const summary = parsedOutput.summary || "";
-            await User.findByIdAndUpdate(req.user._id, { $set: { summary } });
-        } catch (err) {
-            console.error("AI output could not be parsed as JSON:", aiOutput);
-            parsedOutput = { raw: aiOutput };
-        }
+        // Cache the summary field on the user document
+        const summary = parsedOutput.summary || "";
+        await User.findByIdAndUpdate(req.user._id, { $set: { summary } });
 
         return res.json({ success: true, message: "Resume parsed successfully", ai_output: parsedOutput });
     } catch (err) {
-        console.error(err);
+        logger.error(`parseResumeFromCloudinary error for userId=${req.user._id}: ${err.message}`);
         return res.status(500).json({ success: false, message: err.message });
     }
 };

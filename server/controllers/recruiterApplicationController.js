@@ -76,23 +76,27 @@ export const updateApplicationStatus = async (req, res) => {
 
         // Send email notification only if status actually changed and it's not pending
         if (previousStatus !== status && (status === "accepted" || status === "rejected")) {
-            const candidateEmail = app.candidate.email;
-            const candidateName = app.candidate.username;
-            const jobTitle = app.job.title;
+            if (app.candidate && app.candidate.email) {
+                const candidateEmail = app.candidate.email;
+                const candidateName = app.candidate.username;
+                const jobTitle = app.job?.title || "a job";
 
-            // Schedule email with 30-second delay
-            const emailDetails = status === "accepted" ? interviewDetails : feedback;
-            scheduleApplicationStatusEmail(
-                candidateEmail,
-                candidateName,
-                jobTitle,
-                companyName,
-                status,
-                emailDetails,
-                30000 // 30 seconds delay
-            );
+                // Schedule email with 30-second delay
+                const emailDetails = status === "accepted" ? interviewDetails : feedback;
+                scheduleApplicationStatusEmail(
+                    candidateEmail,
+                    candidateName,
+                    jobTitle,
+                    companyName,
+                    status,
+                    emailDetails,
+                    30000 // 30 seconds delay
+                );
 
-            logger.info(`Scheduled ${status} email for candidate ${candidateEmail} after 30 seconds`);
+                logger.info(`Scheduled ${status} email for candidate ${candidateEmail} after 30 seconds`);
+            } else {
+                logger.warn(`Could not send ${status} email for app ${appId}: Candidate email missing.`);
+            }
         }
 
         logger.info(`Application ${appId} status updated to '${status}' by user ${req.user.email}`);
@@ -107,65 +111,169 @@ export const updateApplicationStatus = async (req, res) => {
     }
 };
 
-// AI-powered shortlist for recruiter's job with User as candidate model
+// ── AI-powered shortlist ──────────────────────────────────────────────────────
+// Multi-criteria scoring per candidate:
+//   • skills_match — % of job keywords found in candidate skills (deterministic, 0-100)
+//   • fit_score    — LLM job-fit vs job description (0-100)
+//   • overall_score — weighted blend: 70% fit_score + 30% skills_match
 export const getAIShortlistedApplications = async (req, res) => {
     try {
-        // Verify job belongs to current recruiter
         const job = await Job.findOne({ _id: req.params.jobId, recruiter: req.user._id });
         if (!job) {
             return res.status(404).json({ success: false, message: "Job not found or not yours" });
         }
 
-        // Get applications and populate User candidate fields needed (resumeText and summary for AI)
-        const applications = await Application.find({ job: req.params.jobId }).populate("candidate", "username email resumeText summary");
+        // Populate full profile so UI can display rich candidate cards
+        const applications = await Application.find({ job: req.params.jobId }).populate(
+            "candidate",
+            "username email image resumeText summary skills experience education projects location"
+        );
+
+        if (applications.length === 0) {
+            return res.json({ success: true, applications: [], job, meta: { total: 0, scored: 0 } });
+        }
+
+        // Build keyword set from job text for deterministic skills-match (no LLM needed)
+        const jobKeywords = extractJobKeywords(`${job.title} ${job.description} ${job.requirements || ""}`);
 
         const enhancedApplications = await Promise.all(
             applications.map(async (app) => {
                 const candidate = app.candidate;
-                let summary = candidate.summary;
-
-                try {
-                    const resumeText = candidate.resumeText;
-                    if (!resumeText) {
-                        logger.warn(`No resume text for candidate ${candidate._id}, skipping`);
-                        return { ...app.toObject(), fit_score: null, fit_explanation: "Resume not parsed" };
-                    }
-
-                    // Generate and cache summary if missing
-                    if (!summary) {
-                        const aiSummaryRaw = await analyzeResumeMistral(resumeText, "");
-                        let cleanedSummary = aiSummaryRaw.trim().replace(/^```/, "").replace(/```$/, "").trim();
-                        const parsedSummary = JSON.parse(cleanedSummary);
-                        summary = parsedSummary.summary || "";
-                        // Save generated summary to User collection
-                        await User.findByIdAndUpdate(candidate._id, { $set: { summary } }, { new: true });
-                    }
-
-                    // AI fit score analysis
-                    const fitData = await analyzeCandidateJobFit(job.description, summary);
-
+                
+                if (!candidate) {
+                    logger.warn(`Application ${app._id} has a null candidate (user deleted). Skipping AI scoring.`);
                     return {
                         ...app.toObject(),
-                        fit_score: fitData.fit_score,
-                        fit_explanation: fitData.explanation,
-                        summary,
+                        fit_score: null,
+                        fit_explanation: "Candidate account has been deleted.",
+                        skills_match_score: 0,
+                        overall_score: null,
+                        summary: "",
+                        scoring_status: "deleted_user",
+                        rank: null,
                     };
-                } catch (error) {
-                    logger.error(`AI scoring failed for app ${app._id}:`, error);
-                    return { ...app.toObject(), fit_score: null, fit_explanation: "AI error or resume summary unavailable" };
+                }
+
+                const base = {
+                    ...app.toObject(),
+                    fit_score: null,
+                    fit_explanation: "",
+                    skills_match_score: null,
+                    overall_score: null,
+                    summary: candidate?.summary || "",
+                    scoring_status: "pending",
+                    rank: null,
+                };
+
+                try {
+                    // ── Deterministic: skills-match ───────────────────────────────
+                    const candidateSkills = (candidate?.skills || [])
+                        .map((s) => (typeof s === "string" ? s : s?.name || "").toLowerCase())
+                        .filter(Boolean);
+
+                    const skillsMatch = jobKeywords.length > 0
+                        ? Math.round(
+                            (candidateSkills.filter((sk) =>
+                                jobKeywords.some((kw) => sk.includes(kw) || kw.includes(sk))
+                            ).length / jobKeywords.length) * 100
+                        )
+                        : 0;
+
+                    // ── LLM: resume-fit ───────────────────────────────────────────
+                    if (!candidate?.resumeText) {
+                        logger.warn(`No resumeText for candidate ${candidate?._id}`);
+                        const overall = Math.round(skillsMatch * 0.3);
+                        return {
+                            ...base,
+                            skills_match_score: skillsMatch,
+                            overall_score: overall,
+                            scoring_status: "no_resume",
+                            fit_explanation: "Candidate has not yet parsed their resume — score based on skills only.",
+                        };
+                    }
+
+                    // Generate or use cached AI summary
+                    let summary = candidate.summary;
+                    if (!summary) {
+                        const parsed = await analyzeResumeMistral(candidate.resumeText, job.title);
+                        summary = parsed.summary || "";
+                        await User.findByIdAndUpdate(candidate._id, { $set: { summary } });
+                    }
+
+                    // LLM job-fit
+                    const fitData = await analyzeCandidateJobFit(job.description, summary);
+                    const fitScore = fitData.fit_score;
+                    const overall = Math.round(fitScore * 0.7 + skillsMatch * 0.3);
+
+                    return {
+                        ...base,
+                        fit_score: fitScore,
+                        fit_explanation: fitData.explanation,
+                        skills_match_score: skillsMatch,
+                        overall_score: overall,
+                        summary,
+                        scoring_status: "scored",
+                    };
+                } catch (err) {
+                    logger.error(`AI scoring failed for application ${app._id}: ${err.message}`);
+                    return {
+                        ...base,
+                        scoring_status: "ai_error",
+                        fit_explanation: "AI scoring temporarily unavailable for this candidate.",
+                    };
                 }
             })
         );
 
-        // Sort applications by fit score descending
-        enhancedApplications.sort((a, b) => (b.fit_score || 0) - (a.fit_score || 0));
+        // Sort: overall_score desc, fit_score desc as tiebreaker, nulls last
+        enhancedApplications.sort((a, b) => {
+            const sa = a.overall_score ?? -1;
+            const sb = b.overall_score ?? -1;
+            if (sb !== sa) return sb - sa;
+            return (b.fit_score ?? -1) - (a.fit_score ?? -1);
+        });
 
-        return res.json({ success: true, applications: enhancedApplications });
+        // Attach rank (1-based)
+        enhancedApplications.forEach((app, i) => { app.rank = i + 1; });
+
+        const scored = enhancedApplications.filter((a) => a.scoring_status === "scored").length;
+        logger.info(`AI shortlist for job ${req.params.jobId}: ${scored}/${applications.length} fully scored`);
+
+        return res.json({
+            success: true,
+            applications: enhancedApplications,
+            job,
+            meta: { total: applications.length, scored },
+        });
     } catch (err) {
         logger.error("Failed to fetch AI shortlisted applications:", err);
         return res.status(500).json({ success: false, message: "Failed to fetch AI shortlisted applications" });
     }
 };
+
+/**
+ * Extracts meaningful lowercase keyword tokens from job text.
+ * Used for deterministic skills-match scoring (zero LLM calls).
+ */
+function extractJobKeywords(text) {
+    const STOP = new Set([
+        "the","and","for","with","that","this","are","have","will","from","your",
+        "our","you","not","but","can","all","any","its","their","about","more",
+        "also","than","into","such","been","has","was","were","they","what","when",
+        "who","how","may","must","should","would","could","very","well","work","team",
+        "role","job","candidate","experience","required","strong","good","skills",
+    ]);
+    return [
+        ...new Set(
+            text
+                .toLowerCase()
+                .replace(/[^a-z0-9#+.\s-]/g, " ")
+                .split(/\s+/)
+                .filter((w) => w.length > 2 && !STOP.has(w))
+        ),
+    ].slice(0, 60); // cap at 60 tokens
+}
+
 
 // Get application statistics for recruiter
 export const getApplicationStats = async (req, res) => {

@@ -13,11 +13,18 @@ import recruiterApplicationRoutes from "./routes/recruiterApplicationRoutes.js";
 import recruiterProfileRoutes from "./routes/recruiterProfileRoutes.js";
 import recruiterCandidateRoutes from "./routes/recruiterCandidateRoutes.js";
 import logger from "./config/logger.js";
+import { startConsistencyJob } from "./services/consistencyJob.js";
+import multer from "multer";
 
 dotenv.config();
 
-// Connect to MongoDB
-connectDB();
+// Connect to MongoDB, then start background jobs
+connectDB().then(() => {
+    startConsistencyJob();
+}).catch((err) => {
+    logger.error(`DB connection failed: ${err.message}`);
+    process.exit(1);
+});
 
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
@@ -25,7 +32,6 @@ const isProd = process.env.NODE_ENV === "production";
 // Middleware
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // CORS config for both dev & prod
@@ -58,13 +64,42 @@ app.use((req, res) => {
     res.status(404).json({ error: "Not Found" });
 });
 
-// Error handler
+// ── Structured error boundary ─────────────────────────────────────────────────
+// Rules:
+//  1. Multer file-size / type errors → 400 with a safe, user-facing message.
+//  2. All other errors → 500 with a generic public message.
+//  3. Stack traces are NEVER sent to the API client.
+//  4. Full error detail (including stack) goes only to the logger (Winston),
+//     which is wired to your observability sink (e.g. Sentry transport).
+// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-    console.error("Server error:", err);
-    res.status(500).json({ error: "Internal Server Error" });
+    // Handle Multer errors (file size, unexpected field, MIME type)
+    if (err instanceof multer.MulterError || err?.code === "LIMIT_FILE_SIZE") {
+        const msg =
+            err.code === "LIMIT_FILE_SIZE"
+                ? `File too large. Maximum allowed size exceeded.`
+                : err.message || "File upload error";
+        logger.warn(`Upload rejected [${err.code}]: ${msg} — path=${req.path}`);
+        return res.status(400).json({ success: false, message: msg });
+    }
+
+    // Log full details to Winston (observability sink)
+    logger.error(`Unhandled error on ${req.method} ${req.path}: ${err?.message}`, {
+        stack: err?.stack,
+        // req metadata (never log body — may contain passwords/tokens)
+        method: req.method,
+        path: req.path,
+        userId: req.user?._id,
+    });
+
+    // Public response: zero internal detail
+    res.status(err?.status || 500).json({
+        success: false,
+        error: "An unexpected error occurred. Please try again later.",
+    });
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`✅ Server is running on port ${PORT}`);
+    logger.info(`Server running on port ${PORT} [${process.env.NODE_ENV || "development"}]`);
 });

@@ -9,17 +9,23 @@ const api = axios.create({
     headers: { "Content-Type": "application/json" },
 });
 
-// Global error handler: unwrap message if backend sends { message }
+// Global response interceptor: unwrap message if backend sends { message }.
+// Debug logging is restricted to DEV builds so PII never appears in production
+// browser consoles.
 api.interceptors.response.use(
     (res) => {
-        console.log("Axios Interceptor - Response success:", res);
+        if (import.meta.env.DEV) {
+            console.debug("Axios [success]", res.config?.method?.toUpperCase(), res.config?.url, res.status);
+        }
         return res;
     },
     (err) => {
-        console.error("Axios Interceptor - Response error:", err);
-        const message = err.response?.data?.message || err.response?.statusText || err.message || "Network error";
-        console.log("Axios Interceptor - Extracted message:", message);
-        return Promise.reject({ success: false, message: message });
+        if (import.meta.env.DEV) {
+            console.debug("Axios [error]", err.config?.method?.toUpperCase(), err.config?.url, err.response?.status);
+        }
+        const message =
+            err.response?.data?.message || err.response?.statusText || err.message || "Network error";
+        return Promise.reject({ success: false, message });
     }
 );
 
@@ -33,8 +39,9 @@ export const logoutUser = () => api.post("/auth/logout").then((r) => r.data);
 // Candidate API calls
 export const getJobs = (params) => api.get("/candidate/jobs", { params }).then((r) => r.data);
 export const getJobDetails = (jobId) => api.get(`/candidate/jobs/${jobId}`).then((r) => r.data);
-export const updateApplication = (appId, data) => api.put(`/candidate/applications/${appId}`, data).then(r => r.data);
-export const withdrawApplication = (appId) => api.put(`/candidate/applications/${appId}`, { status: 'withdrawn' }).then(r => r.data);
-export const deleteApplication = (appId) => api.delete(`/candidate/applications/${appId}`).then(r => r.data);
+export const updateApplication = (appId, data) => api.put(`/candidate/applications/${appId}`, data).then((r) => r.data);
+export const withdrawApplication = (appId) =>
+    api.put(`/candidate/applications/${appId}`, { status: "withdrawn" }).then((r) => r.data);
+export const deleteApplication = (appId) => api.delete(`/candidate/applications/${appId}`).then((r) => r.data);
 
 export default api;

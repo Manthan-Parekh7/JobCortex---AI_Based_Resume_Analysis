@@ -20,10 +20,12 @@ const jobSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-const Job = mongoose.model("Job", jobSchema);
-export default Job;
+// ── Cascade deletes ───────────────────────────────────────────────────────────
+// IMPORTANT: hooks MUST be registered on the schema BEFORE mongoose.model() is
+// called. Registering them after model compilation is unreliable and may cause
+// hooks to be silently skipped, leading to orphaned Application records.
 
-// Cascade delete applications when a job is deleted
+// Triggered by Job.findOneAndDelete(...)
 jobSchema.post("findOneAndDelete", async function (doc) {
     if (!doc) return;
     try {
@@ -34,7 +36,7 @@ jobSchema.post("findOneAndDelete", async function (doc) {
     }
 });
 
-// Support document deleteOne() cascades
+// Triggered by jobDoc.deleteOne()
 jobSchema.post("deleteOne", { document: true, query: false }, async function () {
     try {
         // `this` is the document
@@ -44,3 +46,7 @@ jobSchema.post("deleteOne", { document: true, query: false }, async function () 
         console.error("Cascade delete applications failed for job (doc.deleteOne):", this?._id, err?.message);
     }
 });
+
+// ── Model compilation (must come AFTER all schema middleware) ─────────────────
+const Job = mongoose.model("Job", jobSchema);
+export default Job;

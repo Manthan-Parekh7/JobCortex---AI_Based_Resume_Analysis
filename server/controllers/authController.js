@@ -61,7 +61,7 @@ export const googleAuth = (req, res, next) => next();
 // Google OAuth callback
 export const googleCallback = async (req, res) => {
     try {
-        logger.info(`Google OAuth callback user: ${JSON.stringify(req.user)}`);
+        logger.info(`Google OAuth callback userId=${req.user?._id} provider=google`);
         if (!req.user.isVerified) {
             req.user.isVerified = true;
             logger.info(`User ${req.user.email} verified via Google OAuth`);
@@ -86,7 +86,7 @@ export const githubAuth = (req, res, next) => next();
 // GitHub OAuth callback
 export const githubCallback = async (req, res) => {
     try {
-        logger.info(`GitHub OAuth callback user: ${JSON.stringify(req.user)}`);
+        logger.info(`GitHub OAuth callback userId=${req.user?._id} provider=github`);
         if (!req.user.isVerified) {
             req.user.isVerified = true;
             logger.info(`User ${req.user.email} verified via GitHub OAuth`);
@@ -121,7 +121,7 @@ export const signup = async (req, res) => {
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         const otpExpires = new Date(Date.now() + 15 * 60 * 1000);
 
-        logger.info(`Generated OTP for ${email}: ${otp}`);
+        logger.info(`Generated OTP for ${email}`); // OTP value intentionally omitted from logs
 
         await User.create({
             email,

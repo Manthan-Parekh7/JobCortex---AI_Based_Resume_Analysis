@@ -6,15 +6,19 @@ import { isVerified } from "../middlewares/isVerifiedMiddleware.js";
 
 const router = express.Router();
 
-// Get application statistics (must be before /:jobId route)
-router.get("/stats", isAuthenticated, isVerified, isRecruiter, recruiterAppController.getApplicationStats);
+const guard = [isAuthenticated, isVerified, isRecruiter];
 
-router.get("/:jobId", isAuthenticated, isVerified, isRecruiter, recruiterAppController.getApplicationsForJob);
+// ── Stats (must be before /:jobId to avoid wildcard capture) ──────────────────
+router.get("/stats", ...guard, recruiterAppController.getApplicationStats);
 
-// Update application status (supports both simple and detailed updates)
-router.patch("/:appId/:status", isAuthenticated, isVerified, isRecruiter, recruiterAppController.updateApplicationStatus);
-router.put("/:appId/:status", isAuthenticated, isVerified, isRecruiter, recruiterAppController.updateApplicationStatus);
+// ── AI shortlist (must be before /:jobId for the same reason) ────────────────
+router.get("/:jobId/ai-shortlisted", ...guard, recruiterAppController.getAIShortlistedApplications);
 
-router.get("/:jobId/ai-shortlisted", isAuthenticated, isVerified, isRecruiter, recruiterAppController.getAIShortlistedApplications);
+// ── All applications for a job ────────────────────────────────────────────────
+router.get("/:jobId", ...guard, recruiterAppController.getApplicationsForJob);
+
+// ── Update application status ─────────────────────────────────────────────────
+router.patch("/:appId/:status", ...guard, recruiterAppController.updateApplicationStatus);
+router.put("/:appId/:status", ...guard, recruiterAppController.updateApplicationStatus);
 
 export default router;

@@ -18,7 +18,10 @@ import {
     Users,
     Briefcase,
     GraduationCap,
-    Star
+    Star,
+    BrainCircuit,
+    Sparkles,
+    BarChart2
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -30,10 +33,12 @@ import { Separator } from '../../components/ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
 import { MarkdownViewer } from '../../components/ui/markdown-editor';
 import { ScrollArea } from '../../components/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { Progress } from '../../components/ui/progress';
 import ApplicationStatusDialog from '../../components/ApplicationStatusDialog';
 import { toast } from 'sonner';
 import { BarLoader } from 'react-spinners';
-import { getApplicationsForJob, updateApplicationStatus } from '../../api/recruiterApi';
+import { getApplicationsForJob, updateApplicationStatus, getAIShortlistedApplications } from '../../api/recruiterApi';
 import useFetch from '../../hooks/useFetch';
 
 // Utility: strip common Markdown syntax to produce a plain-text preview
@@ -84,6 +89,13 @@ const RecruiterApplications = () => {
     const [applications, setApplications] = useState([]);
     const [job, setJob] = useState(null);
 
+    // AI Shortlist state
+    const [activeTab, setActiveTab] = useState('all');
+    const [aiApplications, setAiApplications] = useState([]);
+    const [aiMeta, setAiMeta] = useState(null);
+    const [aiLoading, setAiLoading] = useState(false);
+    const [aiFetched, setAiFetched] = useState(false);
+
     // State for the application status dialog
     const [statusDialog, setStatusDialog] = useState({
         isOpen: false,
@@ -105,6 +117,28 @@ const RecruiterApplications = () => {
             setJob(applicationsData.job || null);
         }
     }, [applicationsData]);
+
+    // Fetch AI applications only when tab is clicked
+    useEffect(() => {
+        const fetchAI = async () => {
+            if (activeTab === 'ai' && !aiFetched && jobId) {
+                setAiLoading(true);
+                try {
+                    const response = await getAIShortlistedApplications(jobId);
+                    if (response.success) {
+                        setAiApplications(response.applications);
+                        setAiMeta(response.meta);
+                        setAiFetched(true);
+                    }
+                } catch (error) {
+                    toast.error('Failed to load AI Shortlist');
+                } finally {
+                    setAiLoading(false);
+                }
+            }
+        };
+        fetchAI();
+    }, [activeTab, aiFetched, jobId]);
 
     const handleStatusUpdate = (applicationId, newStatus, candidateName) => {
         if (newStatus === 'pending') {
@@ -479,6 +513,75 @@ const RecruiterApplications = () => {
         );
     };
 
+    const AICandidateCard = ({ application }) => {
+        const candidate = application.candidate;
+        
+        return (
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+                <Card className="hover:shadow-md transition-shadow relative overflow-hidden border-t-4 border-t-primary">
+                    <CardContent className="p-6">
+                        <div className="flex items-start justify-between mb-4">
+                            <div className="flex items-center space-x-4">
+                                <div className="flex flex-col items-center justify-center bg-primary/10 text-primary rounded-full w-12 h-12 font-bold text-xl border-2 border-primary/20">
+                                    #{application.rank}
+                                </div>
+                                <div>
+                                    <h3 className="font-semibold text-lg">{candidate?.username}</h3>
+                                    <p className="text-muted-foreground text-sm">{candidate?.email}</p>
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <div className="text-3xl font-bold text-primary">{application.overall_score ?? '--'}%</div>
+                                <div className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Overall Match</div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-6 mb-4 bg-muted/30 p-4 rounded-lg">
+                            <div>
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-muted-foreground flex items-center font-medium"><BrainCircuit className="h-4 w-4 mr-1.5 text-blue-500"/> Resume Fit</span>
+                                    <span className="font-bold">{application.fit_score ?? '--'}%</span>
+                                </div>
+                                <Progress value={application.fit_score || 0} className="h-2" />
+                            </div>
+                            <div>
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-muted-foreground flex items-center font-medium"><BarChart2 className="h-4 w-4 mr-1.5 text-green-500"/> Skills Match</span>
+                                    <span className="font-bold">{application.skills_match_score ?? '--'}%</span>
+                                </div>
+                                <Progress value={application.skills_match_score || 0} className="h-2" />
+                            </div>
+                        </div>
+
+                        {application.fit_explanation && (
+                            <div className="mb-5">
+                                <p className="text-sm font-semibold text-muted-foreground mb-2 flex items-center">
+                                    <Sparkles className="h-4 w-4 mr-1.5 text-amber-500" /> AI Insights
+                                </p>
+                                <p className="text-sm text-foreground/90 leading-relaxed bg-amber-50/50 dark:bg-amber-950/20 p-4 rounded-lg border border-amber-100 dark:border-amber-900/30">
+                                    {application.fit_explanation}
+                                </p>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 items-center justify-between pt-2 border-t border-border/50">
+                            <CandidateProfileDialog candidate={candidate} application={application} />
+                            
+                            <div className="flex gap-2">
+                                <Button size="sm" onClick={() => handleStatusUpdate(application._id, 'accepted', candidate?.username)} className="bg-green-600 hover:bg-green-700 text-white shadow-sm" disabled={application.status === 'accepted'}>
+                                    <CheckCircle className="h-4 w-4 mr-1.5" /> Accept
+                                </Button>
+                                <Button size="sm" variant="destructive" onClick={() => handleStatusUpdate(application._id, 'rejected', candidate?.username)} className="shadow-sm" disabled={application.status === 'rejected'}>
+                                    <XCircle className="h-4 w-4 mr-1.5" /> Reject
+                                </Button>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </motion.div>
+        );
+    };
+
     if (loading) {
         return (
             <div className="flex items-center justify-center min-h-screen">
@@ -551,62 +654,117 @@ const RecruiterApplications = () => {
                 </motion.div>
             )}
 
-            {/* Filters */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.2 }}
-                className="flex flex-col sm:flex-row gap-4"
-            >
-                <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder="Search candidates by name or email..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-10"
-                    />
-                </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-full sm:w-[180px]">
-                        <Filter className="h-4 w-4 mr-2" />
-                        <SelectValue placeholder="Filter by status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">All Status</SelectItem>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="accepted">Accepted</SelectItem>
-                        <SelectItem value="rejected">Rejected</SelectItem>
-                    </SelectContent>
-                </Select>
-            </motion.div>
+            {/* Main Content Tabs */}
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <TabsList className="w-full sm:w-auto grid grid-cols-2 mb-6 h-auto p-1 bg-muted/50">
+                    <TabsTrigger value="all" className="py-2.5 data-[state=active]:shadow-sm">
+                        <Users className="h-4 w-4 mr-2" /> All Applications
+                    </TabsTrigger>
+                    <TabsTrigger value="ai" className="py-2.5 data-[state=active]:shadow-sm data-[state=active]:text-primary">
+                        <Sparkles className="h-4 w-4 mr-2" /> AI Smart Shortlist
+                    </TabsTrigger>
+                </TabsList>
 
-            {/* Applications List */}
-            <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.3 }}
-                className="space-y-4"
-            >
-                {filteredApplications.length > 0 ? (
-                    filteredApplications.map((application) => (
-                        <ApplicationCard key={application._id} application={application} />
-                    ))
-                ) : (
-                    <Card>
-                        <CardContent className="p-12 text-center">
-                            <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                            <h3 className="text-lg font-semibold mb-2">No applications found</h3>
-                            <p className="text-muted-foreground">
-                                {applications.length === 0
-                                    ? "No one has applied to this job yet."
-                                    : "No applications match your current filters."
-                                }
-                            </p>
+                {/* Tab: Standard Applications View */}
+                <TabsContent value="all" className="space-y-6 mt-0">
+                    {/* Filters */}
+                    <motion.div
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.2 }}
+                        className="flex flex-col sm:flex-row gap-4"
+                    >
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="Search candidates by name or email..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="pl-10 shadow-sm"
+                            />
+                        </div>
+                        <Select value={statusFilter} onValueChange={setStatusFilter}>
+                            <SelectTrigger className="w-full sm:w-[180px] shadow-sm">
+                                <Filter className="h-4 w-4 mr-2" />
+                                <SelectValue placeholder="Filter by status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All Status</SelectItem>
+                                <SelectItem value="pending">Pending</SelectItem>
+                                <SelectItem value="accepted">Accepted</SelectItem>
+                                <SelectItem value="rejected">Rejected</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </motion.div>
+
+                    {/* Applications List */}
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.3 }}
+                        className="space-y-4"
+                    >
+                        {filteredApplications.length > 0 ? (
+                            filteredApplications.map((application) => (
+                                <ApplicationCard key={application._id} application={application} />
+                            ))
+                        ) : (
+                            <Card className="border-dashed border-2">
+                                <CardContent className="p-12 text-center">
+                                    <Users className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                                    <h3 className="text-lg font-semibold mb-2">No applications found</h3>
+                                    <p className="text-muted-foreground">
+                                        {applications.length === 0
+                                            ? "No one has applied to this job yet."
+                                            : "No applications match your current filters."
+                                        }
+                                    </p>
+                                </CardContent>
+                            </Card>
+                        )}
+                    </motion.div>
+                </TabsContent>
+
+                {/* Tab: AI Shortlist View */}
+                <TabsContent value="ai" className="space-y-6 mt-0">
+                    <Card className="bg-primary/5 border-primary/20 shadow-sm">
+                        <CardContent className="p-6 flex items-start gap-4">
+                            <div className="bg-primary/10 p-3 rounded-full shrink-0">
+                                <BrainCircuit className="h-6 w-6 text-primary" />
+                            </div>
+                            <div>
+                                <h3 className="font-semibold text-lg text-primary mb-1">AI Smart Filtering</h3>
+                                <p className="text-sm text-muted-foreground leading-relaxed">
+                                    Candidates are automatically ranked based on a <strong className="text-foreground">70% Resume Fit</strong> (AI analysis of resume vs job description) and <strong className="text-foreground">30% Skills Match</strong> (keyword overlap). This helps you surface the best talent instantly.
+                                </p>
+                            </div>
                         </CardContent>
                     </Card>
-                )}
-            </motion.div>
+
+                    {aiLoading ? (
+                        <div className="py-20 flex flex-col items-center justify-center space-y-4">
+                            <BarLoader color="#36d7b7" width={150} />
+                            <p className="text-sm text-muted-foreground animate-pulse">AI is scoring candidates...</p>
+                        </div>
+                    ) : aiApplications.length > 0 ? (
+                        <div className="space-y-4">
+                            {aiApplications.map((application) => (
+                                <AICandidateCard key={application._id} application={application} />
+                            ))}
+                        </div>
+                    ) : (
+                        <Card className="border-dashed border-2">
+                            <CardContent className="p-12 text-center">
+                                <Sparkles className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                                <h3 className="text-lg font-semibold mb-2">No scored candidates</h3>
+                                <p className="text-muted-foreground">
+                                    We couldn't generate a shortlist. Make sure candidates have uploaded resumes.
+                                </p>
+                            </CardContent>
+                        </Card>
+                    )}
+                </TabsContent>
+            </Tabs>
 
             {/* Application Status Dialog */}
             <ApplicationStatusDialog
