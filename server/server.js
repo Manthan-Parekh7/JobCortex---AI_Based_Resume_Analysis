@@ -17,14 +17,15 @@ import { startConsistencyJob } from "./services/consistencyJob.js";
 import multer from "multer";
 
 dotenv.config();
-
 // Connect to MongoDB, then start background jobs
-connectDB().then(() => {
-    startConsistencyJob();
-}).catch((err) => {
-    logger.error(`DB connection failed: ${err.message}`);
-    process.exit(1);
-});
+connectDB()
+    .then(() => {
+        startConsistencyJob();
+    })
+    .catch((err) => {
+        logger.error(`DB connection failed: ${err.message}`);
+        process.exit(1);
+    });
 
 const app = express();
 const isProd = process.env.NODE_ENV === "production";
@@ -39,7 +40,7 @@ app.use(
     cors({
         origin: isProd ? process.env.CLIENT_URL : "http://localhost:5173",
         credentials: true,
-    })
+    }),
 );
 
 // Initialize passport
@@ -75,10 +76,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
     // Handle Multer errors (file size, unexpected field, MIME type)
     if (err instanceof multer.MulterError || err?.code === "LIMIT_FILE_SIZE") {
-        const msg =
-            err.code === "LIMIT_FILE_SIZE"
-                ? `File too large. Maximum allowed size exceeded.`
-                : err.message || "File upload error";
+        const msg = err.code === "LIMIT_FILE_SIZE" ? `File too large. Maximum allowed size exceeded.` : err.message || "File upload error";
         logger.warn(`Upload rejected [${err.code}]: ${msg} — path=${req.path}`);
         return res.status(400).json({ success: false, message: msg });
     }
