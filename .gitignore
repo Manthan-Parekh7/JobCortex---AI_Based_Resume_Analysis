@@ -1,16 +1,63 @@
-# Node
+# =========================
+# Node / JavaScript
+# =========================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# Env
-.env
+# =========================
+# Python / FastAPI
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
 
-# Build
-dist/
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+
+# Coverage / test artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# Packaging / build artifacts
 build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
 
+# Jupyter
+.ipynb_checkpoints/
+
+# =========================
+# Environment files
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
 # Logs
-logs
+# =========================
+logs/
 *.log

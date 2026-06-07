@@ -1,228 +1,319 @@
 # JobCortex
 
-JobCortex is a **full-stack job portal** designed to streamline the **candidate–recruiter workflow** while leveraging **AI-based resume analysis**.  
-Candidates can upload their resumes, receive **AI-driven insights on skill gaps**, and obtain suggestions for improvement. Recruiters can post jobs, manage applications, and evaluate candidates efficiently.  
+JobCortex is a full-stack job portal with AI-assisted resume analysis and recruiter shortlisting. It connects candidates and recruiters, automates resume parsing and ATS scoring, and provides job-fit signals to speed up hiring decisions.
 
-The system aims to bridge the gap between **job seekers** and **employers**, while also guiding candidates to improve their resumes for better **ATS (Applicant Tracking System) scores** and career growth.
+## Why it exists
+Manual screening and unstructured resumes slow down hiring. JobCortex standardizes resume data, surfaces skill gaps against job descriptions, and helps recruiters rank applicants consistently.
 
----
+## Key features
 
-## ✨ Features
+### Candidate features
+- Email + OTP signup and login, plus Google and GitHub OAuth.
+- Profile builder for skills, experience, education, projects, and certifications.
+- Resume upload and replacement (PDF, DOC, DOCX) stored in Cloudinary.
+- Job discovery with search and detail pages.
+- Apply, withdraw, and track application status.
+- AI resume analysis with ATS score, JD match, skills gap, and summary.
+- Export analysis as a PDF report.
 
-### 🔹 Candidate Side
-- Register/login using **email/password** or **OAuth (Google/GitHub)**  
-- Upload resumes in PDF/DOC formats  
-- **AI-powered resume scan**:  
-  - Extracts **skills, projects, education, experience**  
-  - Identifies **missing skills**  
-  - Provides an **ATS score**  
-  - Gives **improvement suggestions**  
-- View **job roles**  
-- Apply to jobs posted by recruiters  
+### Recruiter features
+- Company profile creation and updates.
+- Post jobs, update listings, and toggle active or inactive status.
+- Manage applications and update statuses.
+- AI shortlist that combines skills-match scoring with resume-fit scoring.
+- Candidate discovery (applied candidates list and skill-based search).
 
-### 🔹 Recruiter Side
-- Secure login and dashboard  
-- Post jobs with detailed requirements in markdown format  
-- Manage candidate applications    
+### Platform features
+- Role-based access control for candidate and recruiter.
+- Internal service authentication between API and analysis service.
+- Background consistency job to remove orphaned applications.
+- Structured logging and safe error handling.
 
-### 🔹 AI Resume Analyzer
-Example AI output for a candidate's resume:
+## Microservice architecture
 
-```json
-{
-  "skills": ["Java", "Python", "Node.js", "React", "MongoDB"],
-  "missing_skills": ["TensorFlow", "AWS", "Docker"],
-  "ats_score": 75,
-  "strengths": ["Full-stack experience", "Machine learning projects"],
-  "weaknesses": ["No cloud experience"],
-  "improvement_suggestions": ["Add certifications", "Improve ATS formatting"],
-  "recommended_roles": ["Software Engineer", "Full-Stack Developer"]
-}
+Runtime services are split into three parts: the web client, the core API, and a dedicated resume analysis service. The repository also includes a standalone ATS scorer app for experimentation.
+
+```mermaid
+flowchart LR
+  subgraph Client[Web Client]
+    UI[React + Vite UI]
+  end
+  subgraph API[Core API]
+    API_GW[Node.js + Express]
+    AUTH[Auth + OTP + OAuth]
+    JOBS[Jobs + Companies]
+    APPS[Applications]
+    AI_PROXY[Resume Analysis Proxy]
+  end
+  subgraph ANALYSIS[Resume Analysis Service]
+    ANALYZE[Analyze Resume]
+    PDF[Generate PDF]
+  end
+  subgraph DB[MongoDB]
+    USERS[(Users)]
+    COMP[(Companies)]
+    JOBS_DB[(Jobs)]
+    APPS_DB[(Applications)]
+    ANALYSES[(ResumeAnalyses)]
+  end
+  subgraph EXT[External Services]
+    CLOUD[Cloudinary]
+    OAUTH[Google/GitHub OAuth]
+    EMAIL[SMTP Email]
+    GROQ[Groq LLM]
+  end
+
+  UI --> API_GW
+  API_GW --> AUTH
+  API_GW --> JOBS
+  API_GW --> APPS
+  API_GW --> AI_PROXY
+
+  API_GW --> DB
+  API_GW --> CLOUD
+  AUTH --> OAUTH
+  AUTH --> EMAIL
+  AI_PROXY --> ANALYSIS
+  ANALYSIS --> GROQ
 ```
 
----
+## API calling use case: resume analysis and PDF export
 
-## 🚀 Installation & Setup
+```mermaid
+sequenceDiagram
+  actor Candidate
+  participant UI as Web Client
+  participant API as Node API
+  participant Cloud as Cloudinary
+  participant DB as MongoDB
+  participant Analysis as Resume Analysis Service
 
-### Prerequisites
-- Node.js (v14 or higher)
-- MongoDB (v4.4 or higher)
-- npm or yarn package manager
-
-### 1. Clone Repository
-```bash
-git clone https://github.com/Manthan-Parekh7/JobCortex.git
-cd JobCortex
+  Candidate ->> UI: Upload resume and enter job description
+  UI ->> API: POST /candidate/me/parse-resume-cloudinary
+  API ->> DB: Check cached resumeText and analysis
+  API ->> Cloud: Download resume file when needed
+  API ->> Analysis: POST /api/v1/analyze-resume (X-Internal-Service-Key)
+  Analysis -->> API: ATS score, JD match, feedback
+  API ->> DB: Store ResumeAnalysis cache and update user summary
+  API -->> UI: Parsed summary + full analysis
+  UI ->> API: POST /candidate/me/resume-analysis/pdf
+  API ->> Analysis: POST /api/v1/generate-pdf
+  Analysis -->> API: PDF bytes
+  API -->> UI: ats_report.pdf
 ```
 
-### 2. Backend Installation
-```bash
-cd server
-npm install
+## Database model (high level)
+
+```mermaid
+erDiagram
+  USER ||--o{ JOB : posts
+  USER ||--o{ COMPANY : owns
+  USER ||--o{ APPLICATION : applies
+  COMPANY ||--o{ JOB : has
+  JOB ||--o{ APPLICATION : receives
+  USER ||--o{ RESUME_ANALYSIS : has
+
+  USER {
+    ObjectId _id
+    string email
+    string role
+    string resume
+    string summary
+  }
+  COMPANY {
+    ObjectId _id
+    string name
+    ObjectId createdBy
+  }
+  JOB {
+    ObjectId _id
+    string title
+    ObjectId company
+    ObjectId recruiter
+  }
+  APPLICATION {
+    ObjectId _id
+    ObjectId job
+    ObjectId candidate
+    string status
+  }
+  RESUME_ANALYSIS {
+    ObjectId _id
+    ObjectId user
+    string resumeTextHash
+    string jobHash
+  }
 ```
 
-### 3. Frontend Installation
-```bash
-cd client
-npm install
+## Directory structure
+
+```
+JobCortex/
+├── client/                       React UI (Vite)
+│   ├── src/
+│   │   ├── api/                   API wrappers (axios)
+│   │   ├── components/            UI components
+│   │   ├── pages/                 Candidate and recruiter pages
+│   │   └── context/               Auth and app state
+├── server/                       Core API (Node.js + Express + MongoDB)
+│   ├── ai/                        Resume analysis adapters
+│   ├── config/                    DB and Cloudinary setup
+│   ├── controllers/               Request handlers
+│   ├── middlewares/               Auth and role guards
+│   ├── models/                    Mongoose schemas
+│   ├── routes/                    REST endpoints
+│   ├── services/                  Background jobs and integrations
+│   └── utils/                     Parsing and helpers
+├── resume-analysis-service/       FastAPI resume analysis microservice
+│   └── backend/                   API, NLP pipeline, report generation
+├── ai-resume-ats/                 Standalone ATS scorer (FastAPI + Streamlit)
+├── db-backup/                     MongoDB dump (optional)
+└── README.md
 ```
 
-### 4. Environment Variables Setup
+## Tech stack
 
-#### Backend (.env file in server folder)
-Create a `.env` file in the `server` directory with the following variables:
+### Frontend
+- React 19, Vite 7
+- Tailwind CSS 4, Radix UI, shadcn/ui
+- React Router, React Hook Form, Zod
+- Axios, Framer Motion
 
-```env
-# Database Configuration
+### Core API
+- Node.js, Express 5
+- MongoDB with Mongoose
+- Passport (Google/GitHub OAuth), JWT + HttpOnly cookies
+- Cloudinary, Multer, pdf-parse, mammoth
+- Winston logging, Nodemailer
+
+### Resume analysis service
+- FastAPI, Pydantic, Uvicorn
+- spaCy, Sentence Transformers, RapidFuzz
+- PDF/DOCX parsing utilities
+- Groq API for LLM suggestions
+- Playwright for PDF export
+
+### Standalone ATS scorer (ai-resume-ats)
+- FastAPI + Streamlit
+- spaCy, Sentence Transformers
+- Supabase auth + storage
+
+## Environment variables
+
+### server/.env
+```
 MONGODB_URI=mongodb://localhost:27017/jobcortex
 DB_NAME=jobcortex
-
-# Server Configuration
 PORT=5000
 NODE_ENV=development
 
-# JWT Configuration
-JWT_SECRET=your_jwt_secret_key_here
+CLIENT_URL=http://localhost:5173
+JWT_SECRET=your_jwt_secret_key
+JWT_REFRESH_SECRET=your_refresh_secret
 JWT_EXPIRES_IN=7d
 
-# Email Configuration (for sending emails)
 EMAIL_HOST=smtp.gmail.com
 EMAIL_PORT=587
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASS=your_email_password
 
-# OAuth Configuration
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_CALLBACK_URL=http://localhost:5000/auth/google/callback
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
+GITHUB_CALLBACK_URL=http://localhost:5000/auth/github/callback
 
-# Cloudinary Configuration (for file uploads)
 CLOUDINARY_CLOUD_NAME=your_cloudinary_cloud_name
 CLOUDINARY_API_KEY=your_cloudinary_api_key
 CLOUDINARY_API_SECRET=your_cloudinary_api_secret
 
-# AI Service Configuration
-OPENROUTER_API_KEY=your_openrouter_api_key
+RESUME_ANALYSIS_SERVICE_URL=http://localhost:8001
+RESUME_ANALYSIS_SERVICE_KEY=your_internal_service_key
 GEMINI_API_KEY=your_gemini_api_key
 
-# Session Configuration
 SESSION_SECRET=your_session_secret_key
+
+# Optional controls
+RESUME_MAX_SIZE_MB=5
+PROFILE_IMAGE_MAX_SIZE_MB=2
+CONSISTENCY_JOB_INTERVAL_HOURS=24
 ```
 
-#### Frontend (.env file in client folder)
-Create a `.env` file in the `client` directory:
-
-```env
-VITE_API_BASE_URL=http://localhost:5000/api
-VITE_SERVER_URL=http://localhost:5000
+### client/.env
+```
+VITE_API_BASE_URL=http://localhost:5000
 ```
 
-### 5. Database Setup
-
-#### Option 1: Restore from Backup (Recommended)
-If you have the database backup included in the project:
-
-```bash
-# Navigate to project root directory
-cd JobCortex
-
-# Restore the database
-mongorestore --db jobportal ./db-backup/jobportal
+### resume-analysis-service/.env
+```
+INTERNAL_SERVICE_KEY=your_internal_service_key
+GROQ_API_KEY=your_groq_api_key
+SENTENCE_TRANSFORMER_MODEL=all-MiniLM-L6-v2
 ```
 
-#### Option 2: Fresh Database Setup
-If no backup is available, the application will create the necessary collections automatically when you first run it.
+## Local setup
 
----
-
-## 🏃 Running the Project
-
-### Start Backend Server
-```bash
+### 1) Core API
+```
 cd server
-npm run dev
+npm install
+npm run server
 ```
-The backend server will start on `http://localhost:5000`
 
-### Start Frontend Development Server
-```bash
+### 2) Resume analysis service
+```
+cd resume-analysis-service
+python -m venv .venv
+# Windows (PowerShell)
+.\.venv\Scripts\Activate
+# macOS/Linux
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+python -m spacy download en_core_web_md
+python -m playwright install
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001
+```
+
+### 3) Web client
+```
 cd client
+npm install
 npm run dev
 ```
-The frontend will start on `http://localhost:5173`
 
-### Access the Application
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:5000/`
+Open the app at http://localhost:5173
 
----
+## API surface (selected)
 
-## 📁 Project Structure
+### Auth
+- POST /auth/signup, /auth/login, /auth/verify-otp
+- GET /auth/google, /auth/github
+- GET /auth/me, PATCH /auth/update-role
 
-```
-JobCortex/
-│
-├── server/                     # Backend (Node.js + Express + MongoDB)
-│   ├── ai/                     # AI clients & resume analysis
-│   ├── config/                 # Database & configuration files
-│   ├── controllers/            # Business logic controllers
-│   ├── middlewares/            # Authentication & validation middlewares
-│   ├── models/                 # Mongoose database models
-│   ├── routes/                 # API route definitions
-│   ├── services/               # Business logic services
-│   ├── utils/                  # Utility functions
-│   ├── logs/                   # Application logs
-│   └── server.js               # Server entry point
-│
-├── client/                     # Frontend (React.js + Vite)
-│   ├── public/                 # Static assets
-│   ├── src/                    # React source code
-│   │   ├── components/         # Reusable components
-│   │   ├── pages/              # Page components
-│   │   ├── context/            # React context
-│   │   └── assets/             # Images & icons
-│   └── index.html              # Main HTML file
-│
-├── db-backup/                  # MongoDB database backup
-└── README.md                   # Project documentation
-```
+### Candidate
+- GET /candidate/jobs, /candidate/jobs/:jobId
+- POST /candidate/jobs/:jobId/apply
+- GET /candidate/applications/me
+- POST /candidate/me/resume
+- POST /candidate/me/parse-resume-cloudinary
+- POST /candidate/me/resume-analysis/pdf
 
----
+### Recruiter
+- POST /company/profile, GET /company/me, PUT /company/me
+- POST /jobs, GET /jobs/my, PUT /jobs/:jobId, DELETE /jobs/:jobId
+- GET /recruiter/applications/:jobId
+- GET /recruiter/applications/:jobId/ai-shortlisted
+- GET /recruiter/candidates/applied, /recruiter/candidates/search
 
-## 🛠️ Available Scripts
+## Database and backups
 
-### Backend Scripts
-- `npm run server` - Start development server with nodemon
-- `npm start` - Start production server
+- MongoDB database name: jobcortex
+- Backup dump: db-backup/jobportal
+- Collections: Users, Companies, Jobs, Applications, ResumeAnalyses
 
-### Frontend Scripts
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run preview` - Preview production build
-- `npm run lint` - Run ESLint
+## Notes
 
----
-
-## 🗄️ Database Information
-
-- **Database**: MongoDB
-- **Database Name**: `jobcortex`
-- **Collections**: Users, Jobs, Applications, Companies
-- **Backup Location**: `./db-backup/jobcortex`
-
----
-
-## 🔧 Additional Configuration
-
-### MongoDB Setup
-1. Install MongoDB on your system
-2. Start MongoDB service
-3. Create database named `jobcortex`
-4. Restore backup using the commands mentioned above
-
-### API Keys Required
-- **Google OAuth**: For Google authentication
-- **GitHub OAuth**: For GitHub authentication  
-- **Cloudinary**: For file upload and storage
-- **OpenRouter/Gemini**: For AI-powered resume analysis
+- The resume analysis service is stateless; caching is stored in MongoDB by the core API.
+- Internal service calls require X-Internal-Service-Key.
+- For job-fit scoring, candidates must have parsed resumes stored in their profile.
