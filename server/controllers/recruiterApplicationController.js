@@ -1,10 +1,10 @@
 import Application from "../models/Application.js";
 import Job from "../models/Job.js";
-import User from "../models/User.js";
 import Company from "../models/Company.js";
 import logger from "../config/logger.js";
-import { analyzeCandidateJobFit, analyzeResumeMistral } from "../ai/openrouterClient.js";
+import { analyzeCandidateJobFit } from "../ai/openrouterClient.js";
 import { scheduleApplicationStatusEmail } from "../utils/emailService.js";
+import { hashText } from "../utils/textHash.js";
 
 // View applications for a specific job
 export const getApplicationsForJob = async (req, res) => {
@@ -90,7 +90,7 @@ export const updateApplicationStatus = async (req, res) => {
                     companyName,
                     status,
                     emailDetails,
-                    30000 // 30 seconds delay
+                    30000, // 30 seconds delay
                 );
 
                 logger.info(`Scheduled ${status} email for candidate ${candidateEmail} after 30 seconds`);
@@ -118,28 +118,28 @@ export const updateApplicationStatus = async (req, res) => {
 //   • overall_score — weighted blend: 70% fit_score + 30% skills_match
 export const getAIShortlistedApplications = async (req, res) => {
     try {
+        const forceRefresh = String(req.query.forceRefresh || "").toLowerCase() === "true";
         const job = await Job.findOne({ _id: req.params.jobId, recruiter: req.user._id });
         if (!job) {
             return res.status(404).json({ success: false, message: "Job not found or not yours" });
         }
 
         // Populate full profile so UI can display rich candidate cards
-        const applications = await Application.find({ job: req.params.jobId }).populate(
-            "candidate",
-            "username email image resumeText summary skills experience education projects location"
-        );
+        const applications = await Application.find({ job: req.params.jobId }).populate("candidate", "username email image resumeText resumeTextHash summary skills experience education projects location");
 
         if (applications.length === 0) {
             return res.json({ success: true, applications: [], job, meta: { total: 0, scored: 0 } });
         }
 
         // Build keyword set from job text for deterministic skills-match (no LLM needed)
-        const jobKeywords = extractJobKeywords(`${job.title} ${job.description} ${job.requirements || ""}`);
+        const jobText = `${job.title} ${job.description} ${job.requirements || ""}`;
+        const jobKeywords = extractJobKeywords(jobText);
+        const jobHash = hashText(jobText);
 
         const enhancedApplications = await Promise.all(
             applications.map(async (app) => {
                 const candidate = app.candidate;
-                
+
                 if (!candidate) {
                     logger.warn(`Application ${app._id} has a null candidate (user deleted). Skipping AI scoring.`);
                     return {
@@ -154,6 +154,9 @@ export const getAIShortlistedApplications = async (req, res) => {
                     };
                 }
 
+                const resumeHash = candidate?.resumeTextHash || (candidate?.resumeText ? hashText(candidate.resumeText) : null);
+                const cached = !forceRefresh && app.aiShortlist && app.aiShortlist.resumeTextHash === resumeHash && app.aiShortlist.jobHash === jobHash;
+
                 const base = {
                     ...app.toObject(),
                     fit_score: null,
@@ -165,19 +168,22 @@ export const getAIShortlistedApplications = async (req, res) => {
                     rank: null,
                 };
 
+                if (cached) {
+                    return {
+                        ...base,
+                        fit_score: app.aiShortlist.fitScore ?? null,
+                        fit_explanation: app.aiShortlist.explanation || "",
+                        skills_match_score: app.aiShortlist.skillsMatchScore ?? null,
+                        overall_score: app.aiShortlist.overallScore ?? null,
+                        scoring_status: "cached",
+                    };
+                }
+
                 try {
                     // ── Deterministic: skills-match ───────────────────────────────
-                    const candidateSkills = (candidate?.skills || [])
-                        .map((s) => (typeof s === "string" ? s : s?.name || "").toLowerCase())
-                        .filter(Boolean);
+                    const candidateSkills = (candidate?.skills || []).map((s) => (typeof s === "string" ? s : s?.name || "").toLowerCase()).filter(Boolean);
 
-                    const skillsMatch = jobKeywords.length > 0
-                        ? Math.round(
-                            (candidateSkills.filter((sk) =>
-                                jobKeywords.some((kw) => sk.includes(kw) || kw.includes(sk))
-                            ).length / jobKeywords.length) * 100
-                        )
-                        : 0;
+                    const skillsMatch = jobKeywords.length > 0 ? Math.round((candidateSkills.filter((sk) => jobKeywords.some((kw) => sk.includes(kw) || kw.includes(sk))).length / jobKeywords.length) * 100) : 0;
 
                     // ── LLM: resume-fit ───────────────────────────────────────────
                     if (!candidate?.resumeText) {
@@ -192,18 +198,25 @@ export const getAIShortlistedApplications = async (req, res) => {
                         };
                     }
 
-                    // Generate or use cached AI summary
-                    let summary = candidate.summary;
-                    if (!summary) {
-                        const parsed = await analyzeResumeMistral(candidate.resumeText, job.title);
-                        summary = parsed.summary || "";
-                        await User.findByIdAndUpdate(candidate._id, { $set: { summary } });
-                    }
-
-                    // LLM job-fit
-                    const fitData = await analyzeCandidateJobFit(job.description, summary);
+                    // LLM job-fit (via internal resume analysis service)
+                    const fitData = await analyzeCandidateJobFit(jobText, candidate.resumeText);
                     const fitScore = fitData.fit_score;
                     const overall = Math.round(fitScore * 0.7 + skillsMatch * 0.3);
+
+                    await Application.findByIdAndUpdate(app._id, {
+                        $set: {
+                            aiShortlist: {
+                                fitScore,
+                                skillsMatchScore: skillsMatch,
+                                overallScore: overall,
+                                explanation: fitData.explanation,
+                                status: "scored",
+                                updatedAt: new Date(),
+                                resumeTextHash: resumeHash,
+                                jobHash,
+                            },
+                        },
+                    });
 
                     return {
                         ...base,
@@ -211,7 +224,6 @@ export const getAIShortlistedApplications = async (req, res) => {
                         fit_explanation: fitData.explanation,
                         skills_match_score: skillsMatch,
                         overall_score: overall,
-                        summary,
                         scoring_status: "scored",
                     };
                 } catch (err) {
@@ -222,7 +234,7 @@ export const getAIShortlistedApplications = async (req, res) => {
                         fit_explanation: "AI scoring temporarily unavailable for this candidate.",
                     };
                 }
-            })
+            }),
         );
 
         // Sort: overall_score desc, fit_score desc as tiebreaker, nulls last
@@ -234,7 +246,9 @@ export const getAIShortlistedApplications = async (req, res) => {
         });
 
         // Attach rank (1-based)
-        enhancedApplications.forEach((app, i) => { app.rank = i + 1; });
+        enhancedApplications.forEach((app, i) => {
+            app.rank = i + 1;
+        });
 
         const scored = enhancedApplications.filter((a) => a.scoring_status === "scored").length;
         logger.info(`AI shortlist for job ${req.params.jobId}: ${scored}/${applications.length} fully scored`);
@@ -256,24 +270,17 @@ export const getAIShortlistedApplications = async (req, res) => {
  * Used for deterministic skills-match scoring (zero LLM calls).
  */
 function extractJobKeywords(text) {
-    const STOP = new Set([
-        "the","and","for","with","that","this","are","have","will","from","your",
-        "our","you","not","but","can","all","any","its","their","about","more",
-        "also","than","into","such","been","has","was","were","they","what","when",
-        "who","how","may","must","should","would","could","very","well","work","team",
-        "role","job","candidate","experience","required","strong","good","skills",
-    ]);
+    const STOP = new Set(["the", "and", "for", "with", "that", "this", "are", "have", "will", "from", "your", "our", "you", "not", "but", "can", "all", "any", "its", "their", "about", "more", "also", "than", "into", "such", "been", "has", "was", "were", "they", "what", "when", "who", "how", "may", "must", "should", "would", "could", "very", "well", "work", "team", "role", "job", "candidate", "experience", "required", "strong", "good", "skills"]);
     return [
         ...new Set(
             text
                 .toLowerCase()
                 .replace(/[^a-z0-9#+.\s-]/g, " ")
                 .split(/\s+/)
-                .filter((w) => w.length > 2 && !STOP.has(w))
+                .filter((w) => w.length > 2 && !STOP.has(w)),
         ),
     ].slice(0, 60); // cap at 60 tokens
 }
-
 
 // Get application statistics for recruiter
 export const getApplicationStats = async (req, res) => {

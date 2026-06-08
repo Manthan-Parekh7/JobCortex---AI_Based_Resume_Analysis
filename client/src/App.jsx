@@ -10,7 +10,7 @@ import FindJobs from './pages/candidate/FindJobs';
 import Dashboard from './components/Dashboard';
 import MyApplications from './pages/candidate/MyApplications';
 import ViewProfile from './pages/candidate/ViewProfile';
-import AISummary from './pages/candidate/AISummary';
+import ResumeAnalysis from './pages/candidate/ResumeAnalysis';
 
 import PostJob from './pages/recruiter/PostJob';
 import CompanyProfile from './pages/recruiter/CompanyProfile';
@@ -33,7 +33,8 @@ const App = () => {
           <Route path='dashboard' element={<Dashboard />} />
           <Route path='applications' element={<MyApplications />} />
           <Route path='edit-profile' element={<ViewProfile />} />
-          <Route path='ai-summary' element={<AISummary />} />
+          <Route path='resume-analysis' element={<ResumeAnalysis />} />
+          <Route path='ai-summary' element={<ResumeAnalysis />} />
         </Route>
 
         {/* Recruiter Protected Routes */}

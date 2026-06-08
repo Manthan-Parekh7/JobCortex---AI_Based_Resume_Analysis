@@ -2,10 +2,11 @@
 import { downloadFileBuffer } from "./fileDownloader.js";
 import { extractTextFromPDF, extractTextFromDocx } from "./fileParser.js";
 import User from "../models/User.js";
+import { hashText } from "./textHash.js";
 
 export async function getOrParseResumeText(userId) {
     // Guard: user must exist
-    const user = await User.findById(userId).select("resume resumeText");
+    const user = await User.findById(userId).select("resume resumeText resumeTextHash");
     if (!user) {
         throw new Error("User not found");
     }
@@ -16,7 +17,13 @@ export async function getOrParseResumeText(userId) {
     }
 
     // 1. Return cached plain text if available
-    if (user.resumeText) return user.resumeText;
+    if (user.resumeText) {
+        const cachedHash = user.resumeTextHash || hashText(user.resumeText);
+        if (!user.resumeTextHash) {
+            await User.findByIdAndUpdate(userId, { $set: { resumeTextHash: cachedHash } });
+        }
+        return { text: user.resumeText, hash: cachedHash };
+    }
 
     // 2. Download file buffer from resume URL
     const fileBuffer = await downloadFileBuffer(user.resume);
@@ -28,12 +35,7 @@ export async function getOrParseResumeText(userId) {
 
     // 3. Extract text based on file type (magic-byte detection)
     let text;
-    if (
-        fileBuffer[0] === 0x25 &&
-        fileBuffer[1] === 0x50 &&
-        fileBuffer[2] === 0x44 &&
-        fileBuffer[3] === 0x46
-    ) {
+    if (fileBuffer[0] === 0x25 && fileBuffer[1] === 0x50 && fileBuffer[2] === 0x44 && fileBuffer[3] === 0x46) {
         // PDF magic number (%PDF)
         text = await extractTextFromPDF(fileBuffer);
     } else if (fileBuffer[0] === 0x50 && fileBuffer[1] === 0x4b) {
@@ -44,7 +46,8 @@ export async function getOrParseResumeText(userId) {
     }
 
     // 4. Cache the extracted text in DB for subsequent calls
-    await User.findByIdAndUpdate(userId, { $set: { resumeText: text } });
+    const textHash = hashText(text);
+    await User.findByIdAndUpdate(userId, { $set: { resumeText: text, resumeTextHash: textHash } });
 
-    return text;
+    return { text, hash: textHash };
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
@@ -21,7 +21,8 @@ import {
     Star,
     BrainCircuit,
     Sparkles,
-    BarChart2
+    BarChart2,
+    RefreshCw
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -119,26 +120,28 @@ const RecruiterApplications = () => {
     }, [applicationsData]);
 
     // Fetch AI applications only when tab is clicked
-    useEffect(() => {
-        const fetchAI = async () => {
-            if (activeTab === 'ai' && !aiFetched && jobId) {
-                setAiLoading(true);
-                try {
-                    const response = await getAIShortlistedApplications(jobId);
-                    if (response.success) {
-                        setAiApplications(response.applications);
-                        setAiMeta(response.meta);
-                        setAiFetched(true);
-                    }
-                } catch (error) {
-                    toast.error('Failed to load AI Shortlist');
-                } finally {
-                    setAiLoading(false);
-                }
+    const fetchAiShortlist = useCallback(async (forceRefresh = false) => {
+        if (!jobId) return;
+        setAiLoading(true);
+        try {
+            const response = await getAIShortlistedApplications(jobId, forceRefresh);
+            if (response.success) {
+                setAiApplications(response.applications);
+                setAiMeta(response.meta);
+                setAiFetched(true);
             }
-        };
-        fetchAI();
-    }, [activeTab, aiFetched, jobId]);
+        } catch (error) {
+            toast.error('Failed to load AI Shortlist');
+        } finally {
+            setAiLoading(false);
+        }
+    }, [jobId]);
+
+    useEffect(() => {
+        if (activeTab === 'ai' && !aiFetched) {
+            fetchAiShortlist(false);
+        }
+    }, [activeTab, aiFetched, fetchAiShortlist]);
 
     const handleStatusUpdate = (applicationId, newStatus, candidateName) => {
         if (newStatus === 'pending') {
@@ -515,7 +518,7 @@ const RecruiterApplications = () => {
 
     const AICandidateCard = ({ application }) => {
         const candidate = application.candidate;
-        
+
         return (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
                 <Card className="hover:shadow-md transition-shadow relative overflow-hidden border-t-4 border-t-primary">
@@ -539,14 +542,14 @@ const RecruiterApplications = () => {
                         <div className="grid grid-cols-2 gap-6 mb-4 bg-muted/30 p-4 rounded-lg">
                             <div>
                                 <div className="flex justify-between text-sm mb-2">
-                                    <span className="text-muted-foreground flex items-center font-medium"><BrainCircuit className="h-4 w-4 mr-1.5 text-blue-500"/> Resume Fit</span>
+                                    <span className="text-muted-foreground flex items-center font-medium"><BrainCircuit className="h-4 w-4 mr-1.5 text-blue-500" /> Resume Fit</span>
                                     <span className="font-bold">{application.fit_score ?? '--'}%</span>
                                 </div>
                                 <Progress value={application.fit_score || 0} className="h-2" />
                             </div>
                             <div>
                                 <div className="flex justify-between text-sm mb-2">
-                                    <span className="text-muted-foreground flex items-center font-medium"><BarChart2 className="h-4 w-4 mr-1.5 text-green-500"/> Skills Match</span>
+                                    <span className="text-muted-foreground flex items-center font-medium"><BarChart2 className="h-4 w-4 mr-1.5 text-green-500" /> Skills Match</span>
                                     <span className="font-bold">{application.skills_match_score ?? '--'}%</span>
                                 </div>
                                 <Progress value={application.skills_match_score || 0} className="h-2" />
@@ -566,7 +569,7 @@ const RecruiterApplications = () => {
 
                         <div className="flex gap-2 items-center justify-between pt-2 border-t border-border/50">
                             <CandidateProfileDialog candidate={candidate} application={application} />
-                            
+
                             <div className="flex gap-2">
                                 <Button size="sm" onClick={() => handleStatusUpdate(application._id, 'accepted', candidate?.username)} className="bg-green-600 hover:bg-green-700 text-white shadow-sm" disabled={application.status === 'accepted'}>
                                     <CheckCircle className="h-4 w-4 mr-1.5" /> Accept
@@ -740,6 +743,21 @@ const RecruiterApplications = () => {
                             </div>
                         </CardContent>
                     </Card>
+
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-sm text-muted-foreground">
+                            {aiMeta ? `Scored ${aiMeta.scored || 0} of ${aiMeta.total || 0} candidates.` : ""}
+                        </div>
+                        <Button
+                            variant="outline"
+                            className="gap-2"
+                            disabled={aiLoading}
+                            onClick={() => fetchAiShortlist(true)}
+                        >
+                            <RefreshCw className="h-4 w-4" />
+                            Force Recalculate
+                        </Button>
+                    </div>
 
                     {aiLoading ? (
                         <div className="py-20 flex flex-col items-center justify-center space-y-4">

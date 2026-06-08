@@ -1,5 +1,5 @@
 import express from "express";
-import { listJobs, getJobDetails, applyToJob, updateApplication, deleteApplication, myApplications, uploadOrReplaceResume, getResume, deleteResume, updateUserProfile, parseResumeFromCloudinary } from "../controllers/candidateController.js";
+import { listJobs, getJobDetails, applyToJob, updateApplication, deleteApplication, myApplications, uploadOrReplaceResume, getResume, deleteResume, updateUserProfile, parseResumeFromCloudinary, generateResumePdf } from "../controllers/candidateController.js";
 import { isAuthenticated } from "../middlewares/authMiddleware.js";
 import { uploadResume, uploadProfileImage } from "../config/cloudinaryConfig.js";
 
@@ -26,5 +26,6 @@ router.delete("/me/resume", deleteResume);
 router.put("/me/profile", uploadProfileImage.single("profileImage"), updateUserProfile); // This route uses multer
 
 router.post("/me/parse-resume-cloudinary", parseResumeFromCloudinary);
+router.post("/me/resume-analysis/pdf", generateResumePdf);
 
 export default router;

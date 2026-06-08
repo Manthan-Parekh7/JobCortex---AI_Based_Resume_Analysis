@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema(
         resumePublicId: { type: String }, // For deleting purpose
         resumeFilename: { type: String }, // Original filename of the resume
         resumeText: String, // Parsed, plain text (to be cached) (for future ai use case)
+        resumeTextHash: { type: String }, // Deterministic hash of resumeText for caching
 
         role: {
             type: String,
@@ -100,7 +101,7 @@ const userSchema = new mongoose.Schema(
         otp: { type: String },
         otpExpires: { type: Date },
     },
-    { timestamps: true }
+    { timestamps: true },
 );
 
 // Cascade delete related data when a user is deleted

@@ -31,7 +31,7 @@ Manual screening and unstructured resumes slow down hiring. JobCortex standardiz
 
 ## Microservice architecture
 
-Runtime services are split into three parts: the web client, the core API, and a dedicated resume analysis service. The repository also includes a standalone ATS scorer app for experimentation.
+Runtime services are split into three parts: the web client, the core API, and a dedicated resume analysis service.
 
 ```mermaid
 flowchart LR
@@ -102,49 +102,6 @@ sequenceDiagram
   API -->> UI: ats_report.pdf
 ```
 
-## Database model (high level)
-
-```mermaid
-erDiagram
-  USER ||--o{ JOB : posts
-  USER ||--o{ COMPANY : owns
-  USER ||--o{ APPLICATION : applies
-  COMPANY ||--o{ JOB : has
-  JOB ||--o{ APPLICATION : receives
-  USER ||--o{ RESUME_ANALYSIS : has
-
-  USER {
-    ObjectId _id
-    string email
-    string role
-    string resume
-    string summary
-  }
-  COMPANY {
-    ObjectId _id
-    string name
-    ObjectId createdBy
-  }
-  JOB {
-    ObjectId _id
-    string title
-    ObjectId company
-    ObjectId recruiter
-  }
-  APPLICATION {
-    ObjectId _id
-    ObjectId job
-    ObjectId candidate
-    string status
-  }
-  RESUME_ANALYSIS {
-    ObjectId _id
-    ObjectId user
-    string resumeTextHash
-    string jobHash
-  }
-```
-
 ## Directory structure
 
 ```
@@ -165,8 +122,14 @@ JobCortex/
 │   ├── services/                  Background jobs and integrations
 │   └── utils/                     Parsing and helpers
 ├── resume-analysis-service/       FastAPI resume analysis microservice
-│   └── backend/                   API, NLP pipeline, report generation
-├── ai-resume-ats/                 Standalone ATS scorer (FastAPI + Streamlit)
+│   └── backend/                   Analysis API and NLP pipeline
+│       ├── api/                   Service routes
+│       ├── core/                  App config and settings
+│       ├── logs/                  Runtime logs
+│       ├── models/                Pydantic schemas and data models
+│       ├── services/              Parsing, scoring, feedback, and PDF generation
+│       ├── templates/             Report templates
+│       └── utils/                 Shared helpers
 ├── db-backup/                     MongoDB dump (optional)
 └── README.md
 ```
@@ -192,11 +155,6 @@ JobCortex/
 - PDF/DOCX parsing utilities
 - Groq API for LLM suggestions
 - Playwright for PDF export
-
-### Standalone ATS scorer (ai-resume-ats)
-- FastAPI + Streamlit
-- spaCy, Sentence Transformers
-- Supabase auth + storage
 
 ## Environment variables
 

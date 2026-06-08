@@ -21,7 +21,7 @@ const Navbar = ({ onCandidateLoginClick }) => {
   const candidateLinks = [
     { href: "/jobs", label: "Find Jobs" },
     { href: "/applications", label: "My Applications" },
-    { href: "/ai-summary", label: "AI Summary" },
+    { href: "/resume-analysis", label: "Resume Analysis" },
     { href: "/edit-profile", label: "My Profile" },
   ];
 

@@ -23,10 +23,9 @@ api.interceptors.response.use(
         if (import.meta.env.DEV) {
             console.debug("Axios [error]", err.config?.method?.toUpperCase(), err.config?.url, err.response?.status);
         }
-        const message =
-            err.response?.data?.message || err.response?.statusText || err.message || "Network error";
+        const message = err.response?.data?.message || err.response?.statusText || err.message || "Network error";
         return Promise.reject({ success: false, message });
-    }
+    },
 );
 
 // Helper functions (return res.data)
@@ -40,8 +39,21 @@ export const logoutUser = () => api.post("/auth/logout").then((r) => r.data);
 export const getJobs = (params) => api.get("/candidate/jobs", { params }).then((r) => r.data);
 export const getJobDetails = (jobId) => api.get(`/candidate/jobs/${jobId}`).then((r) => r.data);
 export const updateApplication = (appId, data) => api.put(`/candidate/applications/${appId}`, data).then((r) => r.data);
-export const withdrawApplication = (appId) =>
-    api.put(`/candidate/applications/${appId}`, { status: "withdrawn" }).then((r) => r.data);
+export const withdrawApplication = (appId) => api.put(`/candidate/applications/${appId}`, { status: "withdrawn" }).then((r) => r.data);
 export const deleteApplication = (appId) => api.delete(`/candidate/applications/${appId}`).then((r) => r.data);
+
+export const uploadResume = (file) => {
+    const formData = new FormData();
+    formData.append("resume", file);
+    return api
+        .post("/candidate/me/resume", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+        })
+        .then((r) => r.data);
+};
+
+export const analyzeResume = ({ jobDescription = "", forceRefresh = false }) => api.post("/candidate/me/parse-resume-cloudinary", { jobDescription, forceRefresh }, { timeout: 180000 }).then((r) => r.data);
+
+export const generateResumePdf = (analysis) => api.post("/candidate/me/resume-analysis/pdf", { analysis }, { responseType: "blob", timeout: 180000 }).then((r) => r.data);
 
 export default api;

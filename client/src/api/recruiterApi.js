@@ -61,8 +61,9 @@ export const updateApplicationStatusSimple = async (appId, status) => {
     return response.data;
 };
 
-export const getAIShortlistedApplications = async (jobId) => {
-    const response = await api.get(`/recruiter/applications/${jobId}/ai-shortlisted`);
+export const getAIShortlistedApplications = async (jobId, forceRefresh = false) => {
+    const params = forceRefresh ? { forceRefresh: true } : undefined;
+    const response = await api.get(`/recruiter/applications/${jobId}/ai-shortlisted`, { params });
     return response.data;
 };
 

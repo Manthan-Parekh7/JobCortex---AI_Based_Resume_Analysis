@@ -18,8 +18,8 @@ const Dashboard = () => {
             <Link to="/profile/edit">
               <Button variant="ghost" className="w-full justify-start">Edit Profile</Button>
             </Link>
-            <Link to="/ai-summary">
-              <Button variant="ghost" className="w-full justify-start">AI Summary</Button>
+            <Link to="/resume-analysis">
+              <Button variant="ghost" className="w-full justify-start">Resume Analysis</Button>
             </Link>
           </nav>
         </div>

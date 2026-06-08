@@ -8,7 +8,10 @@ const { v2: cloudinary } = pkg;
 
 // AI/Parsing Helpers
 import { getOrParseResumeText } from "../utils/getOrParseResumeText.js";
-import { analyzeResumeMistral } from "../ai/openrouterClient.js";
+import { mapAnalysisToResumeSummary } from "../ai/openrouterClient.js";
+import { analyzeResume, generateResumePdf as generateResumePdfFromService } from "../services/resumeAnalysisClient.js";
+import ResumeAnalysis from "../models/ResumeAnalysis.js";
+import { hashText } from "../utils/textHash.js";
 
 // ── Utility: safe JSON array field parser ─────────────────────────────────────
 /**
@@ -30,7 +33,6 @@ function parseArrayField(fieldValue, fieldName) {
     }
     return parsed;
 }
-
 
 // Get all active jobs (public)
 export const listJobs = async (req, res) => {
@@ -66,7 +68,7 @@ export const listJobs = async (req, res) => {
                     applicationCount,
                     hasApplied,
                 };
-            })
+            }),
         );
 
         const total = await Job.countDocuments(filter);
@@ -356,6 +358,9 @@ export const uploadOrReplaceResume = async (req, res) => {
         user.resume = req.file.path; // Cloudinary URL
         user.resumePublicId = req.file.filename; // Cloudinary public_id
         user.resumeFilename = req.file.originalname; // Original filename
+        user.resumeText = undefined;
+        user.resumeTextHash = undefined;
+        user.summary = undefined;
         await user.save();
 
         logger.info(`Resume uploaded for user ${req.user.email}`);
@@ -403,6 +408,7 @@ export const deleteResume = async (req, res) => {
         user.resume = undefined;
         user.resumePublicId = undefined;
         user.resumeText = undefined;
+        user.resumeTextHash = undefined;
         user.summary = undefined; // delete cached AI summary
         await user.save();
 
@@ -479,21 +485,74 @@ export const updateUserProfile = async (req, res) => {
 export const parseResumeFromCloudinary = async (req, res) => {
     try {
         // Get cached or parsed resume text
-        const resumeText = await getOrParseResumeText(req.user._id);
+        const { text: resumeText, hash: resumeHash } = await getOrParseResumeText(req.user._id);
+        const jobDescription = req.body?.jobDescription || req.body?.jobGoal || "";
+        const forceRefresh = Boolean(req.body?.forceRefresh);
+        const jobHash = jobDescription ? hashText(jobDescription) : null;
 
-        const jobGoal = req.body?.jobGoal || "";
+        let analysisResult = null;
+        let cacheHit = false;
+        let cacheUpdatedAt = null;
 
-        // analyzeResumeMistral now returns a validated, parsed object (via Zod)
-        // No secondary JSON.parse or markdown stripping needed here.
-        const parsedOutput = await analyzeResumeMistral(resumeText, jobGoal);
+        if (!forceRefresh) {
+            const cached = await ResumeAnalysis.findOne({
+                user: req.user._id,
+                resumeTextHash: resumeHash,
+                jobHash,
+            });
 
-        // Cache the summary field on the user document
+            if (cached) {
+                analysisResult = cached.analysisResult;
+                cacheHit = true;
+                cacheUpdatedAt = cached.updatedAt;
+            }
+        }
+
+        if (!analysisResult) {
+            analysisResult = await analyzeResume({
+                resumeText,
+                jobDescription,
+            });
+
+            const saved = await ResumeAnalysis.findOneAndUpdate({ user: req.user._id, resumeTextHash: resumeHash, jobHash }, { $set: { analysisResult } }, { upsert: true, new: true });
+            cacheUpdatedAt = saved?.updatedAt || new Date();
+        }
+
+        const parsedOutput = mapAnalysisToResumeSummary(analysisResult);
         const summary = parsedOutput.summary || "";
         await User.findByIdAndUpdate(req.user._id, { $set: { summary } });
 
-        return res.json({ success: true, message: "Resume parsed successfully", ai_output: parsedOutput });
+        return res.json({
+            success: true,
+            message: "Resume analyzed successfully",
+            ai_output: parsedOutput,
+            analysis: analysisResult,
+            cache: {
+                hit: cacheHit,
+                resumeTextHash: resumeHash,
+                jobHash,
+                updatedAt: cacheUpdatedAt,
+            },
+        });
     } catch (err) {
         logger.error(`parseResumeFromCloudinary error for userId=${req.user._id}: ${err.message}`);
+        return res.status(500).json({ success: false, message: err.message });
+    }
+};
+
+export const generateResumePdf = async (req, res) => {
+    try {
+        const analysis = req.body?.analysis;
+        if (!analysis) {
+            return res.status(400).json({ success: false, message: "analysis payload is required" });
+        }
+
+        const pdfBytes = await generateResumePdfFromService(analysis);
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "attachment; filename=ats_report.pdf");
+        return res.send(Buffer.from(pdfBytes));
+    } catch (err) {
+        logger.error(`generateResumePdf error for userId=${req.user._id}: ${err.message}`);
         return res.status(500).json({ success: false, message: err.message });
     }
 };
